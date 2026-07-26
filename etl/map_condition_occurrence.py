@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
-from fhir_utils import as_dict
+from fhir_utils import as_dict, as_str
 
 CONDITION_TYPE_CONCEPT_ID = 32817  # "EHR" — record derived from an EHR encounter
 
@@ -56,7 +56,7 @@ def map_condition_occurrence(
             map_code_to_concept("SNOMED", code) if code else (0, "Unmapped")
         )
 
-        onset = c.get("onsetDateTime") or ""
+        onset = as_str(c.get("onsetDateTime"))
         rows.append(
             {
                 "condition_source_value": code,

@@ -26,6 +26,18 @@ def as_list(value) -> list:
     return value if isinstance(value, list) else []
 
 
+def as_str(value) -> str:
+    """Coerce a possibly-missing FHIR scalar to a string, NaN included.
+
+    Same NaN hazard as as_dict, one level down: `resource.get("onsetDateTime")`
+    is float NaN when the field is absent from some resources of that type, and
+    `(nan or "")[:10]` raises TypeError: 'float' object is not subscriptable
+    rather than yielding "". Every date/scalar field this pipeline slices needs
+    to go through here.
+    """
+    return value if isinstance(value, str) else ""
+
+
 def stable_id(*parts: str) -> int:
     """Deterministic positive integer surrogate key derived from source ids.
 

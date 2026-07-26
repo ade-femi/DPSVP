@@ -9,7 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
-from fhir_utils import as_dict
+from fhir_utils import as_dict, as_str
 
 DRUG_TYPE_CONCEPT_ID = 32838  # "Prescription written" per OMOP convention
 
@@ -51,7 +51,7 @@ def map_drug_exposure(
             map_code_to_concept("RxNorm", code) if code else (0, "Unmapped")
         )
 
-        authored = m.get("authoredOn") or ""
+        authored = as_str(m.get("authoredOn"))
         rows.append(
             {
                 "drug_source_value": code,

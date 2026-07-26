@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from fhir_utils import as_dict, stable_id
+from fhir_utils import as_dict, as_str, stable_id
 
 # FHIR Encounter.class -> OMOP Visit vocabulary concept_id
 VISIT_TYPE_CONCEPT = {
@@ -53,11 +53,12 @@ def map_visit_occurrence(
 
         rows.append(
             {
-                "visit_source_value": e.get("id"),
+                "visit_source_value": as_str(e.get("id")) or None,
                 "person_id": person_id,
-                "visit_start_date": (period.get("start") or "")[:10] or None,
-                "visit_end_date": (period.get("end") or period.get("start") or "")[:10]
-                or None,
+                "visit_start_date": as_str(period.get("start"))[:10] or None,
+                "visit_end_date": (
+                    as_str(period.get("end")) or as_str(period.get("start"))
+                )[:10] or None,
                 "visit_concept_id": VISIT_TYPE_CONCEPT.get(class_code, DEFAULT_VISIT_CONCEPT),
                 "visit_type_concept_id": EHR_TYPE_CONCEPT_ID,
                 "visit_class_source_value": class_code,

@@ -14,7 +14,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
-from fhir_utils import as_dict
+from fhir_utils import as_dict, as_str
 
 MEASUREMENT_TYPE_CONCEPT_ID = 32817  # "EHR"
 OBSERVATION_TYPE_CONCEPT_ID = 32817
@@ -62,7 +62,7 @@ def map_observations(
         concept_id, concept_name = (
             map_code_to_concept("LOINC", code) if code else (0, "Unmapped")
         )
-        date = (o.get("effectiveDateTime") or "")[:10] or None
+        date = as_str(o.get("effectiveDateTime"))[:10] or None
         value_qty = as_dict(o.get("valueQuantity"))
 
         if value_qty:
