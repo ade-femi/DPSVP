@@ -8,7 +8,7 @@ produces one of these, not just a pass/fail exit code.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tabulate import tabulate
@@ -27,7 +27,10 @@ def generate_report(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    # timezone-aware: datetime.utcnow() is deprecated from Python 3.12
+    timestamp = (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
     n_total = len(validation_results)
     n_passed = sum(1 for r in validation_results if r.passed)
     n_failed = n_total - n_passed

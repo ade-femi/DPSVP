@@ -35,7 +35,6 @@ from map_visit_occurrence import map_visit_occurrence  # noqa: E402
 from map_condition_occurrence import map_condition_occurrence  # noqa: E402
 from map_drug_exposure import map_drug_exposure  # noqa: E402
 from map_observation import map_observations  # noqa: E402
-from concept_mapper import coverage_stats  # noqa: E402
 import validators  # noqa: E402
 from quality_report import generate_report  # noqa: E402
 
@@ -89,7 +88,14 @@ def load_to_postgres(tables: dict[str, pd.DataFrame], schema: str) -> None:
                     continue
                 cols = list(df.columns)
                 col_list = ", ".join(cols)
-                values = [tuple(row) for row in df[cols].itertuples(index=False, name=None)]
+                # pandas represents a missing value in a numeric column as
+                # float NaN, which psycopg2 sends verbatim to an integer/date
+                # column and Postgres rejects. Nullable OMOP FKs such as
+                # visit_occurrence_id legitimately go missing when a resource
+                # references an encounter that isn't in the input, so coerce
+                # every NA to None (SQL NULL) before insert.
+                clean = df[cols].astype(object).where(pd.notna(df[cols]), None)
+                values = [tuple(row) for row in clean.itertuples(index=False, name=None)]
                 sql = f"INSERT INTO {schema}.{table_name} ({col_list}) VALUES %s"
                 execute_values(cur, sql, values, page_size=500)
                 logger.info("Loaded %d rows into %s.%s", len(values), schema, table_name)
