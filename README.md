@@ -42,15 +42,22 @@ any single employer's internal schema.
 It also connects to a separate, ongoing line of published research: applying
 stacked heterogeneous learning models to depression-severity prediction, and
 deep learning to disease-progression prediction in diabetic patients, using
-U.S. federal population-health data (NHANES). That research and this
-pipeline share a common substrate — OMOP CDM is exactly what would let a
-cohort defined on this synthetic FHIR/OMOP data and a cohort defined on
-NHANES-derived data both run through the same OHDSI tooling (ATLAS, cohort
-characterization). This repo is the data-infrastructure side of that same
-underlying problem — depression and cardiometabolic disease are
-bidirectionally linked and easy to miss when the data feeding a predictive
-model is fragmented, ungoverned, or arrives too late to be clinically
-useful.
+U.S. federal population-health data (NHANES) —
+
+> Ayodele, A., Adetunla, A., Akinlabi, E. (2025). Depression Severity
+> Prediction Using Stacked Heterogenous Learning on Integrated Biomedical
+> and Lifestyle Data. *International Journal of Online and Biomedical
+> Engineering (iJOE)*, 21(14), pp. 156–167.
+> https://doi.org/10.3991/ijoe.v21i14.56383
+
+That research and this pipeline share a common substrate — OMOP CDM is
+exactly what would let a cohort defined on this synthetic FHIR/OMOP data and
+a cohort defined on NHANES-derived data both run through the same OHDSI
+tooling (ATLAS, cohort characterization). This repo is the
+data-infrastructure side of that same underlying problem — depression and
+cardiometabolic disease are bidirectionally linked and easy to miss when the
+data feeding a predictive model is fragmented, ungoverned, or arrives too
+late to be clinically useful.
 
 **Scope, stated plainly:** this is a synthetic-data reference implementation
 demonstrating a pipeline methodology. It is not production healthcare
