@@ -27,18 +27,37 @@ there. That transformation is the actual skill this repo demonstrates:
 3. **Governance** — the transformation is validated, logged, and produces an
    auditable data-quality report on every run, not just a one-off script
 
-This is a reference implementation of the same governance discipline applied
-in [PLACEHOLDER: one sentence on your PINS work — what the governance problem
-was there], applied here to a US-healthcare-standards context. It's also
-downstream-compatible with the OMOP-based cohort definitions used in
-observational depression research — see
-[PLACEHOLDER: link to your NHANES/depression publication] — since OMOP is the
-common substrate that lets a cohort defined on synthetic data here and a
-cohort defined on NHANES there both run through the same OHDSI tooling
-(ATLAS, cohort characterization, etc).
+This is a reference implementation of a specific piece of engineering
+discipline, applied to a new domain. As Senior Data Engineer at the UK
+Planning Inspectorate, I built ETL pipelines that improved data accuracy by
+75% and cut retrieval latency by 60% across a national public-sector
+dataset, using Azure Data Factory, Azure Databricks, and Apache Spark. The
+underlying discipline there wasn't Azure-specific — it was validating data
+at every transformation step, logging what happened, and producing an
+auditable record instead of a black-box script. This repo applies that same
+discipline to healthcare data, against the open standards (FHIR, OMOP) that
+U.S. clinical data infrastructure is actually built on, rather than against
+any single employer's internal schema.
 
-> Fill in the two placeholders above with your actual paper/work before
-> publishing — that's the sentence a reviewer or interviewer will read first.
+It also connects to a separate, ongoing line of published research: applying
+stacked heterogeneous learning models to depression-severity prediction, and
+deep learning to disease-progression prediction in diabetic patients, using
+U.S. federal population-health data (NHANES). That research and this
+pipeline share a common substrate — OMOP CDM is exactly what would let a
+cohort defined on this synthetic FHIR/OMOP data and a cohort defined on
+NHANES-derived data both run through the same OHDSI tooling (ATLAS, cohort
+characterization). This repo is the data-infrastructure side of that same
+underlying problem — depression and cardiometabolic disease are
+bidirectionally linked and easy to miss when the data feeding a predictive
+model is fragmented, ungoverned, or arrives too late to be clinically
+useful.
+
+**Scope, stated plainly:** this is a synthetic-data reference implementation
+demonstrating a pipeline methodology. It is not production healthcare
+infrastructure, it has not been validated against real patient data, and it
+is not deployed anywhere. That's not a limitation to apologize for — running
+on synthetic data with no PHI is exactly what makes it possible to build and
+publish openly at all.
 
 ## Architecture
 
@@ -64,6 +83,33 @@ Synthea (Java)                 FHIR R4 Bundles              OMOP CDM v5.4 (Postg
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full data flow and
 [docs/MAPPING_DECISIONS.md](docs/MAPPING_DECISIONS.md) for exactly which FHIR
 fields map to which OMOP fields, and the known limitations.
+
+## Verified run
+
+This isn't just code that runs in principle — it's been run end to end
+against real Synthea output and a real OMOP CDM v5.4 Postgres instance:
+
+- 367 synthetic patients generated as FHIR R4 bundles (300 living + 65 who
+  died during simulation, normal Synthea behavior for a population run)
+- All six mapped OMOP tables loaded, with database row counts matching ETL
+  output exactly: 365 `person`, 21,819 `visit_occurrence`, 13,730
+  `condition_occurrence`, 19,321 `drug_exposure`, 158,803 `measurement`,
+  46,536 `observation`
+- The governance layer ran 17 validation checks: 13 passed outright; the 4
+  flagged are all `concept_coverage` checks, and are expected — see
+  [Known limitations](#known-limitations) below, they're a property of the
+  bundled demo vocabulary, not a defect in the mapping logic
+- No rows were silently dropped anywhere in the pipeline
+
+Running that first end-to-end pass also surfaced and fixed several real
+bugs that only show up against actual data rather than fixtures: a
+Synthea locale issue that silently dropped patients with accented names, a
+pandas `NaN`-vs-`dict` handling bug that crashed every domain mapper on any
+FHIR resource missing an optional field, an OHDSI DDL templating mismatch,
+and a `varchar(60)` truncation issue on free-text observation values. All
+are fixed and in the commit history, each with its own explanatory commit —
+that history is itself part of the audit trail this repo is meant to
+demonstrate.
 
 ## Quickstart
 
@@ -112,6 +158,14 @@ reports/        (gitignored) generated data-quality reports, one per run
   Athena `CONCEPT`/`CONCEPT_RELATIONSHIP` tables. Unmapped codes are recorded
   as `concept_id = 0` and flagged in the quality report — never silently
   dropped.
+- **Database-level FK constraints against `CONCEPT` are intentionally not
+  applied**, for the same reason: `setup/04_init_db.sh` loads tables,
+  primary keys, and indices, but skips `OMOPCDM_postgresql_5.4_constraints.sql`
+  because nearly every constraint in it targets the vocabulary tables above,
+  which this repo doesn't populate. Referential integrity against `CONCEPT`
+  is instead enforced and reported at the application layer, by
+  `governance/validators.py`. Loading the real Athena vocabulary makes it
+  safe to apply that constraints file as-is.
 - **Domain coverage is deliberately narrow** (Condition, Observation,
   MedicationRequest, Encounter → OMOP) rather than exhaustive, per the "modest
   and real" scope. Extending to Procedure, Immunization, etc. follows the
