@@ -1,7 +1,7 @@
 # Prerequisites
 
-You need three things installed: **Docker**, **Java 17+**, and **Python 3.10+**.
-Below is how to check for each and install if missing.
+You need four things installed: **Docker**, **Java 17+**, **Python 3.10+**, and
+**Git**. Below is how to check for each and install if missing.
 
 ## 1. Check what you already have
 
@@ -11,6 +11,7 @@ Open a terminal (Mac: Terminal app; Windows: PowerShell) and run:
 docker --version
 java --version
 python3 --version
+git --version
 ```
 
 If any command says "command not found" / "not recognized", install it below.
