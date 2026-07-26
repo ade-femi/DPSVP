@@ -8,7 +8,14 @@ __pycache__/
 synthea/
 sql/CommonDataModel/
 data/synthea_output/
-reports/
+
+# Ad-hoc run reports are ignored, but reports/example/ is checked in: the
+# quality report is this repo's auditable artifact, and a repo that only
+# ships the code capable of producing one is asserting the result rather
+# than showing it.
+reports/*
+!reports/example/
+!reports/example/*.md
 
 # OS cruft
 .DS_Store
