@@ -5,13 +5,16 @@ Unit tests on the mapping logic against small hand-built fixture FHIR
 resources (not full Synthea output) — fast, deterministic, no external deps.
 Run with: pytest tests/
 """
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "etl"))
+ETL_DIR = Path(__file__).parent.parent / "etl"
+sys.path.insert(0, str(ETL_DIR))
 sys.path.insert(0, str(Path(__file__).parent.parent / "governance"))
 
 from map_person import map_person  # noqa: E402
@@ -113,6 +116,38 @@ def test_exclude_orphans_removes_them_and_reports_the_count():
     assert len(kept) == 1
     assert kept.iloc[0]["person_id"] == 111
     assert kept["person_id"].dtype == "int64", "person_id must be int, not float, after filtering"
+
+
+def test_surrogate_keys_are_stable_across_processes():
+    """person_id / visit_occurrence_id must survive a change of PYTHONHASHSEED.
+
+    Regression test for the use of builtin hash() for surrogate keys. Python
+    salts string hashing per process, so the previous implementation produced
+    a different person_id for the same patient on every run — re-loading the
+    same source data would duplicate every person under a fresh id, which is
+    exactly what the documented idempotency claim rules out. A single-process
+    assertion cannot catch this; the seed has to differ.
+    """
+    snippet = (
+        "import sys; sys.path.insert(0, %r);"
+        "from fhir_utils import stable_id;"
+        "print(stable_id('abc-123'), stable_id('visit', 'enc-9'))" % str(ETL_DIR)
+    )
+    outputs = set()
+    for seed in ("0", "1", "12345"):
+        env = {**os.environ, "PYTHONHASHSEED": seed}
+        result = subprocess.run(
+            [sys.executable, "-c", snippet],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        outputs.add(result.stdout.strip())
+    assert len(outputs) == 1, f"surrogate keys varied across hash seeds: {outputs}"
+
+
+def test_person_id_is_reproducible_for_the_same_patient(fixture_patient):
+    first = map_person(fixture_patient)["person_id"].tolist()
+    second = map_person(fixture_patient)["person_id"].tolist()
+    assert first == second
 
 
 def test_concept_mapper_known_code():

@@ -9,7 +9,7 @@ decisions."
 
 | OMOP field | FHIR source | Decision / rationale |
 |---|---|---|
-| `person_id` | hash of `Patient.id` | Deterministic hash so re-runs are idempotent — same source patient always gets the same person_id, rather than a fresh auto-increment each run. |
+| `person_id` | SHA-256 digest of `Patient.id`, mod 10^9 | Deterministic so re-runs are idempotent — the same source patient always gets the same person_id, rather than a fresh auto-increment each run. Must be a real digest: Python's builtin `hash()` is salted per process, so it would yield a different id every run and silently duplicate every patient on reload. See `etl/fhir_utils.stable_id`. Modulus keeps the key inside OMOP's `integer` column. |
 | `gender_concept_id` | `Patient.gender` | Mapped via fixed OMOP Gender vocabulary (only 2 standard concepts in Synthea's output: male/female). Unrecognized values → `0`, not guessed. |
 | `year/month/day_of_birth` | `Patient.birthDate` | Split from ISO date string. Nulled if Synthea omits the field (rare). |
 | `race_concept_id` / `ethnicity_concept_id` | US-Core race/ethnicity extensions | Synthea populates these extensions in every Patient resource; text value matched against OMOP's fixed race/ethnicity vocabulary. |

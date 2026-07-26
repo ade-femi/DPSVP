@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from fhir_utils import as_list
+from fhir_utils import as_list, stable_id
 
 # OMOP's gender/race/ethnicity concepts are a small fixed set (Vocabulary:
 # Gender, Race, Ethnicity) — safe to hardcode, unlike condition/drug/observation
@@ -86,10 +86,9 @@ def map_person(patients_df: pd.DataFrame) -> pd.DataFrame:
 
     out = pd.DataFrame(rows)
     # Stable integer person_id from the source FHIR id, so the same patient
-    # always lands on the same person_id across pipeline re-runs.
-    out["person_id"] = out["person_source_value"].apply(
-        lambda s: abs(hash(s)) % (10**9)
-    )
+    # always lands on the same person_id across pipeline re-runs. Must be a
+    # real digest, not builtin hash() — see fhir_utils.stable_id.
+    out["person_id"] = out["person_source_value"].apply(stable_id)
     return out[
         [
             "person_id",

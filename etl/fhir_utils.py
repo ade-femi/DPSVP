@@ -11,6 +11,12 @@ before treating an optional nested FHIR field as a dict/list.
 """
 from __future__ import annotations
 
+import hashlib
+
+# OMOP surrogate-key columns (person_id, visit_occurrence_id, ...) are
+# `integer` in the CDM DDL, so keys must stay below 2^31-1.
+_ID_MODULUS = 10**9
+
 
 def as_dict(value) -> dict:
     return value if isinstance(value, dict) else {}
@@ -18,3 +24,16 @@ def as_dict(value) -> dict:
 
 def as_list(value) -> list:
     return value if isinstance(value, list) else []
+
+
+def stable_id(*parts: str) -> int:
+    """Deterministic positive integer surrogate key derived from source ids.
+
+    Uses SHA-256 rather than Python's builtin hash(): string hashing is
+    salted per interpreter process (PYTHONHASHSEED), so hash("abc") differs
+    between runs. Surrogate keys built on it are not reproducible, which
+    breaks the idempotency this pipeline documents — re-running would insert
+    the same patients again under different person_ids.
+    """
+    digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+    return int(digest, 16) % _ID_MODULUS

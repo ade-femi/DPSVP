@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from fhir_utils import as_dict
+from fhir_utils import as_dict, stable_id
 
 # FHIR Encounter.class -> OMOP Visit vocabulary concept_id
 VISIT_TYPE_CONCEPT = {
@@ -68,7 +68,7 @@ def map_visit_occurrence(
     if out.empty:
         return out
     out["visit_occurrence_id"] = out["visit_source_value"].apply(
-        lambda s: abs(hash(("visit", s))) % (10**9)
+        lambda s: stable_id("visit", s)
     )
     return out[
         [
