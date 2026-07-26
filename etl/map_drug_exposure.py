@@ -9,6 +9,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
+from fhir_utils import as_dict
 
 DRUG_TYPE_CONCEPT_ID = 32838  # "Prescription written" per OMOP convention
 
@@ -20,7 +21,7 @@ def _ref_id(reference: str | None) -> str | None:
 
 
 def _rxnorm_code(med_request: dict) -> str | None:
-    concept = med_request.get("medicationCodeableConcept") or {}
+    concept = as_dict(med_request.get("medicationCodeableConcept"))
     for coding in concept.get("coding", []):
         if "rxnorm" in (coding.get("system") or "").lower():
             return coding.get("code")
@@ -37,12 +38,12 @@ def map_drug_exposure(
 
     rows = []
     for _, m in med_requests_df.iterrows():
-        person_src = _ref_id((m.get("subject") or {}).get("reference"))
+        person_src = _ref_id(as_dict(m.get("subject")).get("reference"))
         person_id = person_lookup.get(person_src)
         if person_id is None:
             continue
 
-        encounter_src = _ref_id((m.get("encounter") or {}).get("reference"))
+        encounter_src = _ref_id(as_dict(m.get("encounter")).get("reference"))
         visit_occurrence_id = visit_lookup.get(encounter_src)
 
         code = _rxnorm_code(m)

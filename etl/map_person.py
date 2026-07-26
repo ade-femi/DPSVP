@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from fhir_utils import as_list
+
 # OMOP's gender/race/ethnicity concepts are a small fixed set (Vocabulary:
 # Gender, Race, Ethnicity) — safe to hardcode, unlike condition/drug/observation
 # concepts which number in the millions.
@@ -36,7 +38,7 @@ UNKNOWN_CONCEPT_ID = 0
 
 def _extract_us_core_extension(patient: dict, url_fragment: str) -> str | None:
     """Pulls the display text out of a US-Core race/ethnicity extension."""
-    for ext in patient.get("extension", []):
+    for ext in as_list(patient.get("extension")):
         if url_fragment in ext.get("url", ""):
             for sub in ext.get("extension", []):
                 if sub.get("url") == "text":

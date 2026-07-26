@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from fhir_utils import as_dict
+
 # FHIR Encounter.class -> OMOP Visit vocabulary concept_id
 VISIT_TYPE_CONCEPT = {
     "AMB": 9202,       # Outpatient Visit
@@ -38,14 +40,14 @@ def map_visit_occurrence(
     rows = []
     for _, e in encounters_df.iterrows():
         patient_src = _patient_ref_to_source_value(
-            (e.get("subject") or {}).get("reference")
+            as_dict(e.get("subject")).get("reference")
         )
         person_id = person_lookup.get(patient_src)
         if person_id is None:
             continue  # orphaned encounter, no matching person — flagged by governance validators
 
-        period = e.get("period") or {}
-        class_code = (e.get("class") or {}).get("code", "")
+        period = as_dict(e.get("period"))
+        class_code = as_dict(e.get("class")).get("code", "")
 
         rows.append(
             {

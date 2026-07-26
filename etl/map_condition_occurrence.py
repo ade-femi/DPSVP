@@ -11,6 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
+from fhir_utils import as_dict
 
 CONDITION_TYPE_CONCEPT_ID = 32817  # "EHR" — record derived from an EHR encounter
 
@@ -22,7 +23,7 @@ def _ref_id(reference: str | None) -> str | None:
 
 
 def _snomed_code(condition: dict) -> str | None:
-    for coding in (condition.get("code") or {}).get("coding", []):
+    for coding in as_dict(condition.get("code")).get("coding", []):
         if "snomed" in (coding.get("system") or "").lower():
             return coding.get("code")
     return None
@@ -38,12 +39,12 @@ def map_condition_occurrence(
 
     rows = []
     for _, c in conditions_df.iterrows():
-        person_src = _ref_id((c.get("subject") or {}).get("reference"))
+        person_src = _ref_id(as_dict(c.get("subject")).get("reference"))
         person_id = person_lookup.get(person_src)
         if person_id is None:
             continue
 
-        encounter_src = _ref_id((c.get("encounter") or {}).get("reference"))
+        encounter_src = _ref_id(as_dict(c.get("encounter")).get("reference"))
         visit_occurrence_id = visit_lookup.get(encounter_src)
 
         code = _snomed_code(c)
@@ -62,7 +63,7 @@ def map_condition_occurrence(
                 "condition_start_date": onset[:10] or None,
                 "condition_type_concept_id": CONDITION_TYPE_CONCEPT_ID,
                 "condition_status_source_value": (
-                    (c.get("clinicalStatus") or {}).get("coding", [{}])[0].get("code")
+                    as_dict(as_dict(c.get("clinicalStatus")).get("coding", [{}])[0]).get("code")
                 ),
             }
         )

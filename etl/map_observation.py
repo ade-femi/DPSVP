@@ -14,6 +14,7 @@ from __future__ import annotations
 import pandas as pd
 
 from concept_mapper import map_code_to_concept
+from fhir_utils import as_dict
 
 MEASUREMENT_TYPE_CONCEPT_ID = 32817  # "EHR"
 OBSERVATION_TYPE_CONCEPT_ID = 32817
@@ -26,7 +27,7 @@ def _ref_id(reference: str | None) -> str | None:
 
 
 def _loinc_code(obs: dict) -> str | None:
-    for coding in (obs.get("code") or {}).get("coding", []):
+    for coding in as_dict(obs.get("code")).get("coding", []):
         if "loinc" in (coding.get("system") or "").lower():
             return coding.get("code")
     return None
@@ -45,12 +46,12 @@ def map_observations(
     observation_rows = []
 
     for _, o in observations_df.iterrows():
-        person_src = _ref_id((o.get("subject") or {}).get("reference"))
+        person_src = _ref_id(as_dict(o.get("subject")).get("reference"))
         person_id = person_lookup.get(person_src)
         if person_id is None:
             continue
 
-        encounter_src = _ref_id((o.get("encounter") or {}).get("reference"))
+        encounter_src = _ref_id(as_dict(o.get("encounter")).get("reference"))
         visit_occurrence_id = visit_lookup.get(encounter_src)
 
         code = _loinc_code(o)
@@ -58,9 +59,9 @@ def map_observations(
             map_code_to_concept("LOINC", code) if code else (0, "Unmapped")
         )
         date = (o.get("effectiveDateTime") or "")[:10] or None
-        value_qty = o.get("valueQuantity")
+        value_qty = as_dict(o.get("valueQuantity"))
 
-        if value_qty is not None:
+        if value_qty:
             measurement_rows.append(
                 {
                     "measurement_source_value": code,
@@ -75,10 +76,8 @@ def map_observations(
                 }
             )
         else:
-            value_text = None
-            if "valueCodeableConcept" in o:
-                value_text = (o["valueCodeableConcept"] or {}).get("text")
-            elif "valueString" in o:
+            value_text = as_dict(o.get("valueCodeableConcept")).get("text")
+            if value_text is None and isinstance(o.get("valueString"), str):
                 value_text = o.get("valueString")
 
             observation_rows.append(
