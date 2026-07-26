@@ -1,0 +1,124 @@
+name: CI
+
+# The repo's claim is that transformations are validated on every run, so the
+# tests that check the validators have to run on every push — otherwise
+# "validated" is an assertion about a script nobody executed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor stated in setup/00_prerequisites.md; 3.12 catches
+        # deprecations (e.g. datetime.utcnow) before they become breakage.
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        # -p no:randomly keeps ordering stable; the surrogate-key test spawns
+        # subprocesses with differing PYTHONHASHSEED and must not be affected
+        # by the parent's seed.
+        run: pytest tests/ -v
+
+  end-to-end:
+    # Proves the pipeline still loads a real OMOP CDM v5.4 schema, not just
+    # that the unit tests pass. Uses the official OHDSI DDL, same as
+    # setup/03 + setup/04 do locally.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: omop
+          POSTGRES_PASSWORD: omop_dev_password
+          POSTGRES_DB: omop_cdm
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5433"
+      PGDATABASE: omop_cdm
+      PGUSER: omop
+      PGPASSWORD: omop_dev_password
+      CDM_SCHEMA: cdm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Load OMOP CDM v5.4 DDL
+        run: |
+          bash setup/03_get_omop_ddl.sh
+          bash setup/04_init_db.sh
+
+      - name: Build a tiny FHIR fixture population
+        # Synthea itself needs a Gradle build and several minutes; CI only
+        # needs to prove the FHIR -> OMOP -> Postgres path works, so it
+        # synthesises a couple of minimal R4 bundles instead.
+        run: python .github/scripts/make_fixture_bundles.py /tmp/fhir
+
+      - name: Run the pipeline against Postgres
+        run: |
+          python etl/run_pipeline.py \
+            --input /tmp/fhir \
+            --report-out /tmp/reports \
+            --truncate
+
+      - name: Assert rows actually landed in the CDM
+        run: |
+          set -euo pipefail
+          COUNT=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+            -tAc "select count(*) from ${CDM_SCHEMA}.person;")
+          echo "cdm.person rows: $COUNT"
+          test "$COUNT" -gt 0
+
+      - name: Assert re-running is idempotent, not duplicating
+        run: |
+          set -euo pipefail
+          python etl/run_pipeline.py --input /tmp/fhir --report-out /tmp/reports2 --truncate
+          COUNT=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+            -tAc "select count(*) from ${CDM_SCHEMA}.person;")
+          EXPECTED=$(psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+            -tAc "select count(distinct person_id) from ${CDM_SCHEMA}.person;")
+          echo "rows: $COUNT, distinct person_ids: $EXPECTED"
+          test "$COUNT" = "$EXPECTED"
+
+      - name: Publish the quality report as a build artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-report
+          path: /tmp/reports/*.md

@@ -22,7 +22,7 @@ def generate_report(
     table_row_counts: dict[str, int],
     validation_results: list[ValidationResult],
     output_dir: str | Path,
-    orphan_counts: dict[str, int] | None = None,
+    excluded_counts: dict[str, dict[str, int]] | None = None,
     provenance: dict[str, object] | None = None,
 ) -> Path:
     output_dir = Path(output_dir)
@@ -96,27 +96,34 @@ def generate_report(
 
     lines.append("## Rows excluded from load")
     lines.append("")
-    orphan_counts = orphan_counts or {}
-    total_excluded = sum(orphan_counts.values())
-    if total_excluded:
+    excluded_counts = excluded_counts or {}
+    exclusion_rows = [
+        [table, reason, n]
+        for table, reasons in excluded_counts.items()
+        for reason, n in reasons.items()
+        if n
+    ]
+    total_excluded = sum(row[2] for row in exclusion_rows)
+    if exclusion_rows:
         lines.append(
             tabulate(
-                [[t, n] for t, n in orphan_counts.items() if n],
-                headers=["table", "rows_excluded_unresolved_person_id"],
+                exclusion_rows,
+                headers=["table", "reason", "rows_excluded"],
                 tablefmt="github",
             )
         )
         lines.append("")
         lines.append(
             f"**{total_excluded} row(s)** were mapped and validated but excluded "
-            "from the database load because their subject reference could not be "
-            "resolved to a `person_id`. They are counted in the "
-            "`fk:person_id` checks above, not hidden from them."
+            "from the database load. `unresolved_person_id` rows are counted in "
+            "the `fk:person_id` checks above, not hidden from them; "
+            "`missing_required_*` rows lack a column the OMOP v5.4 DDL declares "
+            "NOT NULL and would otherwise abort the whole table's insert."
         )
     else:
         lines.append(
             "No rows were excluded — every mapped row resolved to a "
-            "`person_id` present in the `person` table."
+            "`person_id` and carried all columns OMOP requires."
         )
     lines.append("")
 

@@ -21,7 +21,7 @@ from map_person import map_person  # noqa: E402
 from map_condition_occurrence import map_condition_occurrence  # noqa: E402
 from concept_mapper import COMMON_CONCEPT_MAP, map_code_to_concept  # noqa: E402
 import concept_mapper  # noqa: E402
-from run_pipeline import exclude_orphans  # noqa: E402
+from run_pipeline import exclude_unloadable  # noqa: E402
 import validators  # noqa: E402
 
 
@@ -106,17 +106,57 @@ def test_fk_check_actually_detects_orphans():
     assert not result.passed
 
 
-def test_exclude_orphans_removes_them_and_reports_the_count():
-    """After validation, orphans are excluded exactly once, with a count."""
+def test_exclude_unloadable_removes_orphans_and_reports_the_reason():
+    """After validation, orphans are excluded exactly once, with a reason."""
     conditions = pd.DataFrame(
         [_condition("keep", "Patient/p1"), _condition("orphan", "Patient/ghost")]
     )
     mapped = map_condition_occurrence(conditions, {"p1": 111}, {})
-    kept, n_excluded = exclude_orphans(mapped, "condition_occurrence")
-    assert n_excluded == 1
+    kept, reasons = exclude_unloadable(mapped, "condition_occurrence")
+    assert reasons == {"unresolved_person_id": 1}
     assert len(kept) == 1
     assert kept.iloc[0]["person_id"] == 111
     assert kept["person_id"].dtype == "int64", "person_id must be int, not float, after filtering"
+
+
+def test_exclude_unloadable_removes_rows_missing_omop_required_columns():
+    """A row with no onset date cannot be inserted — OMOP requires it.
+
+    Regression test: a Synthea MedicationRequest with no authoredOn produced a
+    null drug_exposure_start_date, and because psycopg2 sends a whole page in
+    one statement, that single row aborted the entire table's load with a
+    NotNullViolation instead of being excluded and counted.
+    """
+    conditions = pd.DataFrame(
+        [
+            _condition("dated", "Patient/p1"),
+            # same patient, but no onsetDateTime at all
+            {
+                "id": "undated",
+                "subject": {"reference": "Patient/p1"},
+                "code": {"coding": [{"system": "http://snomed.info/sct", "code": "38341003"}]},
+            },
+        ]
+    )
+    mapped = map_condition_occurrence(conditions, {"p1": 111}, {})
+    assert len(mapped) == 2, "both rows must survive mapping so validators see them"
+
+    kept, reasons = exclude_unloadable(mapped, "condition_occurrence")
+    assert reasons == {"missing_required_condition_start_date": 1}
+    assert len(kept) == 1
+    assert kept.iloc[0]["condition_source_value"] is not None
+
+
+def test_exclusion_reasons_do_not_double_count_a_row():
+    """A row that is both orphaned and incomplete is counted under one reason."""
+    conditions = pd.DataFrame(
+        [{"id": "both", "subject": {"reference": "Patient/ghost"}}]  # no person, no code, no date
+    )
+    mapped = map_condition_occurrence(conditions, {"p1": 111}, {})
+    kept, reasons = exclude_unloadable(mapped, "condition_occurrence")
+    assert kept.empty
+    assert sum(reasons.values()) == 1, f"row counted more than once: {reasons}"
+    assert reasons == {"unresolved_person_id": 1}
 
 
 def test_surrogate_keys_are_stable_across_processes():

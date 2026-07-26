@@ -69,31 +69,98 @@ def _git_revision() -> str:
         return "unknown"
 
 
-def exclude_orphans(df: pd.DataFrame, table_name: str) -> tuple[pd.DataFrame, int]:
-    """Removes rows whose person_id could not be resolved, and says so.
+# Columns declared NOT NULL by the official OMOP CDM v5.4 DDL for the tables
+# this pipeline populates (read off sql/CommonDataModel/inst/ddl/5.4/
+# postgresql/OMOPCDM_postgresql_5.4_ddl.sql). A row missing any of these
+# cannot be inserted, and because psycopg2 sends a whole page in one
+# statement, a single such row aborts the entire table's load. They are
+# therefore excluded and counted here rather than allowed to fail the run —
+# e.g. a Synthea MedicationRequest with no authoredOn yields a null
+# drug_exposure_start_date.
+OMOP_REQUIRED_COLUMNS: dict[str, list[str]] = {
+    "person": [
+        "person_id", "gender_concept_id", "year_of_birth",
+        "race_concept_id", "ethnicity_concept_id",
+    ],
+    "visit_occurrence": [
+        "visit_occurrence_id", "person_id", "visit_concept_id",
+        "visit_start_date", "visit_end_date", "visit_type_concept_id",
+    ],
+    "condition_occurrence": [
+        "condition_occurrence_id", "person_id", "condition_concept_id",
+        "condition_start_date", "condition_type_concept_id",
+    ],
+    "drug_exposure": [
+        "drug_exposure_id", "person_id", "drug_concept_id",
+        "drug_exposure_start_date", "drug_exposure_end_date", "drug_type_concept_id",
+    ],
+    "measurement": [
+        "measurement_id", "person_id", "measurement_concept_id",
+        "measurement_date", "measurement_type_concept_id",
+    ],
+    "observation": [
+        "observation_id", "person_id", "observation_concept_id",
+        "observation_date", "observation_type_concept_id",
+    ],
+}
 
-    The domain mappers deliberately keep these rows (with person_id = None) so
-    that check_referential_integrity can observe and count them — see the
-    comment in etl/map_condition_occurrence.py. This function is the single
-    place where they are actually excluded from the load, and every exclusion
-    is logged and reported. Returns (kept_rows, n_excluded).
+
+def exclude_unloadable(df: pd.DataFrame, table_name: str) -> tuple[pd.DataFrame, dict[str, int]]:
+    """Removes rows the CDM cannot accept, and says exactly why.
+
+    This is the single place rows leave the pipeline. Two exclusion reasons:
+
+      unresolved_person_id  — the source subject reference matched no person.
+          The domain mappers deliberately KEEP these (person_id = None) so
+          check_referential_integrity can observe and count them; see the
+          comment in etl/map_condition_occurrence.py. Filtering them earlier
+          would make that check unable to fail.
+
+      missing_required_<col> — the row lacks a column the OMOP v5.4 DDL
+          declares NOT NULL, so Postgres would reject it (and take the rest
+          of the batch with it).
+
+    Every exclusion is logged here and itemised in the quality report, so no
+    row disappears without appearing in the audit trail. Returns
+    (kept_rows, {reason: count}).
     """
-    if df.empty or "person_id" not in df.columns:
-        return df, 0
+    reasons: dict[str, int] = {}
+    if df.empty:
+        return df, reasons
 
-    orphan_mask = df["person_id"].isna()
-    n_orphaned = int(orphan_mask.sum())
-    if n_orphaned:
-        logger.warning(
-            "Excluding %d orphaned row(s) from %s load — subject references a "
-            "person_id not present in the person table",
-            n_orphaned,
-            table_name,
-        )
-    kept = df.loc[~orphan_mask].copy()
-    if not kept.empty:
+    drop_mask = pd.Series(False, index=df.index)
+
+    if "person_id" in df.columns:
+        orphan_mask = df["person_id"].isna()
+        n_orphaned = int(orphan_mask.sum())
+        if n_orphaned:
+            reasons["unresolved_person_id"] = n_orphaned
+            logger.warning(
+                "Excluding %d row(s) from %s load — subject references a "
+                "person_id not present in the person table",
+                n_orphaned, table_name,
+            )
+        drop_mask |= orphan_mask
+
+    for col in OMOP_REQUIRED_COLUMNS.get(table_name, []):
+        if col not in df.columns:
+            continue
+        # count only rows not already being dropped, so reasons don't double-count
+        missing_mask = df[col].isna() & ~drop_mask
+        n_missing = int(missing_mask.sum())
+        if n_missing:
+            reasons[f"missing_required_{col}"] = n_missing
+            logger.warning(
+                "Excluding %d row(s) from %s load — %s is NULL but OMOP "
+                "declares it NOT NULL",
+                n_missing, table_name, col,
+            )
+        drop_mask |= missing_mask
+
+    kept = df.loc[~drop_mask].copy()
+    if not kept.empty and "person_id" in kept.columns:
         kept["person_id"] = kept["person_id"].astype("int64")
-    return kept, n_orphaned
+    return kept, reasons
 
 
 def load_to_postgres(
@@ -223,7 +290,7 @@ def main():
     # Order matters and is the point: validation above ran against the FULL
     # mapped tables, including orphans, so the FK check reports real numbers.
     # Only now are orphans removed, and every removal is logged and counted.
-    orphan_counts: dict[str, int] = {}
+    excluded_counts: dict[str, dict[str, int]] = {}
     # drop internal helper columns not present in the real OMOP DDL before load
     load_tables = {
         "person": person_df,
@@ -234,7 +301,7 @@ def main():
         "observation": observation_df.drop(columns=["observation_source_concept_name"], errors="ignore"),
     }
     for tname in list(load_tables):
-        load_tables[tname], orphan_counts[tname] = exclude_orphans(load_tables[tname], tname)
+        load_tables[tname], excluded_counts[tname] = exclude_unloadable(load_tables[tname], tname)
 
     if args.no_load:
         logger.info("--no-load set: skipping Postgres load")
@@ -264,7 +331,7 @@ def main():
         row_counts,
         results,
         args.report_out,
-        orphan_counts=orphan_counts,
+        excluded_counts=excluded_counts,
         provenance=provenance,
     )
     logger.info("Quality report written to %s", report_path)
