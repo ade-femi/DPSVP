@@ -19,7 +19,13 @@ cd "$REPO_ROOT/synthea"
 # --exporter.fhir.export=true          : export FHIR R4 bundles
 # --exporter.hospital.fhir.export=false: skip hospital/practitioner bundles for this minimal scope
 # --exporter.baseDirectory              : where output lands
-./run_synthea -p "$N" \
+#
+# LANG/LC_ALL force a UTF-8 locale: Synthea generates plenty of patient
+# names with accented characters (e.g. "María", "Benítez"), and under the
+# default POSIX locale the JVM's file-path encoding can't represent them,
+# silently dropping those patients' export ("Malformed input or input
+# contains unmappable characters").
+LANG=C.utf8 LC_ALL=C.utf8 ./run_synthea -p "$N" \
   --exporter.fhir.export=true \
   --exporter.csv.export=false \
   --exporter.baseDirectory="$OUT_DIR"
