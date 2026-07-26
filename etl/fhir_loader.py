@@ -34,6 +34,10 @@ def load_bundles(input_dir: str | Path) -> Dict[str, List[dict]]:
     """
     Reads every *.json file in input_dir as a FHIR Bundle and returns a dict
     mapping resourceType -> list of raw resource dicts.
+
+    Only bundles containing a Patient resource are treated as patient bundles;
+    Synthea's hospitalInformation/practitionerInformation bundles are counted
+    and skipped separately rather than inflating the patient count.
     """
     input_dir = Path(input_dir)
     files = sorted(input_dir.glob("*.json"))
@@ -47,10 +51,9 @@ def load_bundles(input_dir: str | Path) -> Dict[str, List[dict]]:
     n_bundles = 0
     n_skipped_files = 0
 
+    n_non_patient_bundles = 0
+
     for f in files:
-        # Synthea also writes a few non-patient bundles (e.g. hospitalInformation,
-        # practitionerInformation) when hospital/practitioner export is on.
-        # Skip anything that isn't a patient transaction bundle.
         try:
             bundle = json.loads(f.read_text())
         except json.JSONDecodeError:
@@ -62,17 +65,34 @@ def load_bundles(input_dir: str | Path) -> Dict[str, List[dict]]:
             n_skipped_files += 1
             continue
 
+        entries = bundle.get("entry", [])
+
+        # Synthea writes hospitalInformation*.json / practitionerInformation*.json
+        # alongside the per-patient bundles unless the exporters are disabled
+        # (setup/02_generate_patients.sh passes the flags that disable them).
+        # Those files ARE valid Bundles, so a resourceType check alone lets them
+        # through and they get counted as patients — the reason an earlier run
+        # reported "367 patient bundles" for 365 actual patients. Identify a
+        # patient bundle by whether it contains a Patient resource.
+        if not any(
+            e.get("resource", {}).get("resourceType") == "Patient" for e in entries
+        ):
+            n_non_patient_bundles += 1
+            continue
+
         n_bundles += 1
-        for entry in bundle.get("entry", []):
+        for entry in entries:
             resource = entry.get("resource", {})
             rtype = resource.get("resourceType")
             if rtype in buckets:
                 buckets[rtype].append(resource)
 
     logger.info(
-        "Loaded %d patient bundles from %d files (%d skipped) — resource counts: %s",
+        "Loaded %d patient bundle(s) from %d file(s) — %d non-patient bundle(s) "
+        "skipped, %d unparseable/non-bundle — resource counts: %s",
         n_bundles,
         len(files),
+        n_non_patient_bundles,
         n_skipped_files,
         {k: len(v) for k, v in buckets.items()},
     )

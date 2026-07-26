@@ -17,7 +17,14 @@ cd "$REPO_ROOT/synthea"
 
 # -p N          : generate N patients
 # --exporter.fhir.export=true          : export FHIR R4 bundles
-# --exporter.hospital.fhir.export=false: skip hospital/practitioner bundles for this minimal scope
+# --exporter.csv.export=false          : FHIR only, no CSV
+# --exporter.hospital.fhir.export=false     : skip the Organization/Location
+# --exporter.practitioner.fhir.export=false : and Practitioner metadata bundles.
+#   These two are genuinely passed (an earlier version of this script
+#   described them in a comment but omitted them from the command, which is
+#   why runs produced hospitalInformation*.json / practitionerInformation*.json
+#   alongside the patient bundles and inflated the apparent patient count).
+#   Neither contributes resources this pipeline maps.
 # --exporter.baseDirectory              : where output lands
 #
 # LANG/LC_ALL force a UTF-8 locale: Synthea generates plenty of patient
@@ -28,6 +35,8 @@ cd "$REPO_ROOT/synthea"
 LANG=C.utf8 LC_ALL=C.utf8 ./run_synthea -p "$N" \
   --exporter.fhir.export=true \
   --exporter.csv.export=false \
+  --exporter.hospital.fhir.export=false \
+  --exporter.practitioner.fhir.export=false \
   --exporter.baseDirectory="$OUT_DIR"
 
 echo "Generated $N synthetic patients as FHIR R4 bundles in $OUT_DIR/fhir"
