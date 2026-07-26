@@ -27,17 +27,13 @@ there. That transformation is the actual skill this repo demonstrates:
 3. **Governance** — the transformation is validated, logged, and produces an
    auditable data-quality report on every run, not just a one-off script
 
-This is a reference implementation of a specific piece of engineering
-discipline, applied to a new domain. As Senior Data Engineer at the UK
-Planning Inspectorate, I built ETL pipelines that improved data accuracy by
-75% and cut retrieval latency by 60% across a national public-sector
-dataset, using Azure Data Factory, Azure Databricks, and Apache Spark. The
-underlying discipline there wasn't Azure-specific — it was validating data
-at every transformation step, logging what happened, and producing an
-auditable record instead of a black-box script. This repo applies that same
-discipline to healthcare data, against the open standards (FHIR, OMOP) that
-U.S. clinical data infrastructure is actually built on, rather than against
-any single employer's internal schema.
+The governance layer is the actual point of this repo, not an add-on:
+validating data at every transformation step, logging what happened, and
+producing an auditable record instead of a black-box script generalizes
+across domains — the same discipline applies whether the pipeline is moving
+planning-application data or clinical data. This repo applies it against
+open standards (FHIR, OMOP) rather than any single employer's internal
+schema, which is what makes the resulting methodology portable.
 
 It also connects to a separate, ongoing line of published research: applying
 stacked heterogeneous learning models to depression-severity prediction, and
