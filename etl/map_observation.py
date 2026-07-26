@@ -18,6 +18,10 @@ from fhir_utils import as_dict
 
 MEASUREMENT_TYPE_CONCEPT_ID = 32817  # "EHR"
 OBSERVATION_TYPE_CONCEPT_ID = 32817
+# OMOP's observation.value_as_string is varchar(60); Synthea free-text
+# observation values (e.g. survey responses) routinely exceed that, so
+# truncate rather than let the DB insert fail on StringDataRightTruncation.
+VALUE_AS_STRING_MAX_LEN = 60
 
 
 def _ref_id(reference: str | None) -> str | None:
@@ -79,6 +83,8 @@ def map_observations(
             value_text = as_dict(o.get("valueCodeableConcept")).get("text")
             if value_text is None and isinstance(o.get("valueString"), str):
                 value_text = o.get("valueString")
+            if isinstance(value_text, str) and len(value_text) > VALUE_AS_STRING_MAX_LEN:
+                value_text = value_text[:VALUE_AS_STRING_MAX_LEN]
 
             observation_rows.append(
                 {
