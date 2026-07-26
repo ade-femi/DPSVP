@@ -1,0 +1,154 @@
+"""
+run_pipeline.py
+
+Orchestrates the full Synthea FHIR -> OMOP pipeline:
+  1. Load FHIR bundles (fhir_loader)
+  2. Map each domain in dependency order: person -> visit_occurrence ->
+     condition_occurrence / drug_exposure / measurement / observation
+  3. Run governance validators against each mapped table
+  4. Load into the OMOP Postgres schema
+  5. Write a timestamped data-quality Markdown report
+
+Usage:
+  python etl/run_pipeline.py --input data/synthea_output/fhir --report-out reports/
+  python etl/run_pipeline.py --input data/synthea_output/fhir --report-out reports/ --no-load
+      (--no-load: run mapping + validation + report, skip the DB write —
+       useful for iterating on mapping logic without a DB running)
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import os
+import sys
+import uuid
+from pathlib import Path
+
+import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "governance"))
+
+from fhir_loader import load_bundles, bundles_to_dataframes  # noqa: E402
+from map_person import map_person  # noqa: E402
+from map_visit_occurrence import map_visit_occurrence  # noqa: E402
+from map_condition_occurrence import map_condition_occurrence  # noqa: E402
+from map_drug_exposure import map_drug_exposure  # noqa: E402
+from map_observation import map_observations  # noqa: E402
+from concept_mapper import coverage_stats  # noqa: E402
+import validators  # noqa: E402
+from quality_report import generate_report  # noqa: E402
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("run_pipeline")
+
+
+def load_to_postgres(tables: dict[str, pd.DataFrame], schema: str) -> None:
+    import psycopg2
+    from psycopg2.extras import execute_values
+
+    conn = psycopg2.connect(
+        host=os.environ.get("PGHOST", "localhost"),
+        port=os.environ.get("PGPORT", "5433"),
+        dbname=os.environ.get("PGDATABASE", "omop_cdm"),
+        user=os.environ.get("PGUSER", "omop"),
+        password=os.environ.get("PGPASSWORD", "omop_dev_password"),
+    )
+    try:
+        with conn.cursor() as cur:
+            for table_name, df in tables.items():
+                if df.empty:
+                    logger.info("Skipping load for %s — no rows", table_name)
+                    continue
+                cols = list(df.columns)
+                col_list = ", ".join(cols)
+                values = [tuple(row) for row in df[cols].itertuples(index=False, name=None)]
+                sql = f"INSERT INTO {schema}.{table_name} ({col_list}) VALUES %s"
+                execute_values(cur, sql, values, page_size=500)
+                logger.info("Loaded %d rows into %s.%s", len(values), schema, table_name)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", required=True, help="Directory of Synthea FHIR bundle JSON files")
+    parser.add_argument("--report-out", default="reports", help="Directory for the quality report")
+    parser.add_argument("--schema", default=os.environ.get("CDM_SCHEMA", "cdm"))
+    parser.add_argument("--no-load", action="store_true", help="Skip loading into Postgres")
+    args = parser.parse_args()
+
+    run_id = uuid.uuid4().hex[:8]
+    logger.info("Starting pipeline run %s", run_id)
+
+    # 1. Load raw FHIR
+    buckets = load_bundles(args.input)
+    dfs = bundles_to_dataframes(buckets)
+
+    # 2. Map, in dependency order
+    person_df = map_person(dfs["Patient"])
+    person_lookup = dict(zip(person_df["person_source_value"], person_df["person_id"]))
+    logger.info("Mapped %d persons", len(person_df))
+
+    visit_df = map_visit_occurrence(dfs["Encounter"], person_lookup)
+    visit_lookup = dict(zip(visit_df["visit_source_value"], visit_df["visit_occurrence_id"])) if not visit_df.empty else {}
+    logger.info("Mapped %d visit_occurrences", len(visit_df))
+
+    condition_df = map_condition_occurrence(dfs["Condition"], person_lookup, visit_lookup)
+    drug_df = map_drug_exposure(dfs["MedicationRequest"], person_lookup, visit_lookup)
+    measurement_df, observation_df = map_observations(dfs["Observation"], person_lookup, visit_lookup)
+
+    logger.info(
+        "Mapped rows — condition_occurrence: %d, drug_exposure: %d, measurement: %d, observation: %d",
+        len(condition_df), len(drug_df), len(measurement_df), len(observation_df),
+    )
+
+    tables = {
+        "person": person_df,
+        "visit_occurrence": visit_df,
+        "condition_occurrence": condition_df,
+        "drug_exposure": drug_df,
+        "measurement": measurement_df,
+        "observation": observation_df,
+    }
+
+    # 3. Governance validation
+    results: list[validators.ValidationResult] = []
+    person_ids = set(person_df["person_id"]) if not person_df.empty else set()
+
+    results += validators.check_not_null(person_df, "person", ["person_id", "gender_concept_id"])
+    for tname, df, date_col, concept_col in [
+        ("visit_occurrence", visit_df, "visit_start_date", "visit_concept_id"),
+        ("condition_occurrence", condition_df, "condition_start_date", "condition_concept_id"),
+        ("drug_exposure", drug_df, "drug_exposure_start_date", "drug_concept_id"),
+        ("measurement", measurement_df, "measurement_date", "measurement_concept_id"),
+        ("observation", observation_df, "observation_date", "observation_concept_id"),
+    ]:
+        results.append(validators.check_referential_integrity(df, "person_id", person_ids, tname))
+        results.append(validators.check_date_sanity(df, date_col, tname))
+        results.append(validators.check_concept_coverage(df, concept_col, tname))
+
+    # 4. Load
+    if args.no_load:
+        logger.info("--no-load set: skipping Postgres load")
+    else:
+        # drop internal helper columns not present in the real OMOP DDL before load
+        load_tables = {
+            "person": person_df,
+            "visit_occurrence": visit_df.drop(columns=["visit_source_value", "visit_class_source_value"], errors="ignore"),
+            "condition_occurrence": condition_df.drop(columns=["condition_source_concept_name", "condition_status_source_value"], errors="ignore"),
+            "drug_exposure": drug_df.drop(columns=["drug_source_concept_name", "status_source_value"], errors="ignore"),
+            "measurement": measurement_df.drop(columns=["measurement_source_concept_name"], errors="ignore"),
+            "observation": observation_df.drop(columns=["observation_source_concept_name"], errors="ignore"),
+        }
+        load_to_postgres(load_tables, args.schema)
+
+    # 5. Report
+    row_counts = {t: len(df) for t, df in tables.items()}
+    report_path = generate_report(run_id, row_counts, results, args.report_out)
+    logger.info("Quality report written to %s", report_path)
+
+
+if __name__ == "__main__":
+    main()

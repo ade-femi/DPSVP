@@ -1,0 +1,14 @@
+# Local environment
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Downloaded/generated at setup time - not checked in
+synthea/
+sql/CommonDataModel/
+data/synthea_output/
+reports/
+
+# OS cruft
+.DS_Store

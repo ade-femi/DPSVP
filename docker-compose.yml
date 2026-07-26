@@ -1,0 +1,16 @@
+services:
+  omop-postgres:
+    image: postgres:16
+    container_name: omop-cdm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: omop
+      POSTGRES_PASSWORD: omop_dev_password
+      POSTGRES_DB: omop_cdm
+    ports:
+      - "5433:5432"   # 5433 on host to avoid clashing with any local postgres on 5432
+    volumes:
+      - omop_pgdata:/var/lib/postgresql/data
+
+volumes:
+  omop_pgdata:
