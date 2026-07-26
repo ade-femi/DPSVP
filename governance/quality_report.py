@@ -13,6 +13,7 @@ from pathlib import Path
 
 from tabulate import tabulate
 
+from concept_mapper import VERIFIED_AGAINST_ATHENA
 from validators import ValidationResult
 
 
@@ -110,6 +111,16 @@ def generate_report(
         "it ships a small hand-curated concept map, not the full Athena "
         "vocabulary. See `etl/concept_mapper.py` for the production seam."
     )
+    if not VERIFIED_AGAINST_ATHENA:
+        lines.append(
+            "- **The bundled concept map is UNVERIFIED.** Its `concept_id` "
+            "values were entered by hand and have not been checked against "
+            "https://athena.ohdsi.org, so rows counted as *mapped* above may "
+            "still carry an incorrect standard concept. Coverage percentages "
+            "measure how many rows found *a* mapping, not that the mapping is "
+            "right. Treat mapped-concept semantics as unvalidated until "
+            "`concept_mapper.VERIFIED_AGAINST_ATHENA` is True."
+        )
     lines.append(
         "- Validation above runs against the **full** mapped tables, before "
         "any row is excluded, so the `fk:person_id` counts reflect the real "

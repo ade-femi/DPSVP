@@ -38,23 +38,39 @@ logger = logging.getLogger("concept_mapper")
 
 UNMAPPED_CONCEPT_ID = 0
 
+# Whether the concept_ids in COMMON_CONCEPT_MAP below have been checked
+# against the authoritative OHDSI vocabulary (https://athena.ohdsi.org).
+#
+# This is False, deliberately and visibly. The IDs were entered by hand as
+# best-effort values to make the pipeline runnable end-to-end, and have not
+# been confirmed against Athena. A governance-first project must not let that
+# fact live only in a source comment where a reader of the README would never
+# see it, so it is exposed as a flag: run_pipeline surfaces it in every
+# quality report, and tests/test_mapping.py asserts the map is at least
+# internally consistent. Flip this to True only after checking every row, at
+# which point the check_concept_coverage threshold is also worth revisiting.
+VERIFIED_AGAINST_ATHENA = False
+
 # A small, hand-curated subset of (vocabulary_id, source_code) -> OMOP
 # standard concept_id, for the codes Synthea emits most frequently. This is
 # NOT a substitute for the full Athena vocabulary at production scale.
 # Format: {(vocabulary_id, code): (concept_id, concept_name)}
-# CAUTION: verify every concept_id below against https://athena.ohdsi.org
-# before treating this as production-trustworthy. These were entered as
-# best-effort placeholders to make the pipeline runnable end-to-end; a
-# governance-first project should not ship unverified IDs silently — this
-# comment is itself part of the audit trail. Verifying/correcting this table
-# against a live Athena lookup is the first "real" task once the pipeline
-# runs end-to-end.
+#
+# Invariant enforced by tests: no concept_id may appear twice under two
+# different names. A collision means at least one row is wrong — see the
+# removed acute-bronchitis entry below for a case this caught.
 COMMON_CONCEPT_MAP: dict[tuple[str, str], tuple[int, str]] = {
     # --- SNOMED-CT conditions (a handful of the most common Synthea conditions) ---
     ("SNOMED", "38341003"): (320128, "Essential hypertension"),
     ("SNOMED", "44054006"): (201826, "Type 2 diabetes mellitus"),
     ("SNOMED", "195662009"): (4132546, "Acute viral pharyngitis"),
-    ("SNOMED", "10509002"): (255848, "Acute bronchitis"),
+    # ("SNOMED", "10509002"): acute bronchitis — REMOVED. It carried
+    # concept_id 255848, the same id given to pneumonia below, which cannot
+    # be right for two distinct conditions; the id looks copy-pasted. Rather
+    # than substitute a remembered replacement (the same unverified guessing
+    # that produced the error), the entry is dropped: SNOMED 10509002 now
+    # falls through to concept_id 0 and is counted as unmapped in the quality
+    # report. Restore it with a value read off Athena.
     ("SNOMED", "233604007"): (255848, "Pneumonia"),
     ("SNOMED", "35489007"): (440383, "Depressive disorder"),
     ("SNOMED", "13645005"): (255573, "Chronic obstructive bronchitis"),

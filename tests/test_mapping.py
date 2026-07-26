@@ -19,7 +19,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "governance"))
 
 from map_person import map_person  # noqa: E402
 from map_condition_occurrence import map_condition_occurrence  # noqa: E402
-from concept_mapper import map_code_to_concept  # noqa: E402
+from concept_mapper import COMMON_CONCEPT_MAP, map_code_to_concept  # noqa: E402
+import concept_mapper  # noqa: E402
 from run_pipeline import exclude_orphans  # noqa: E402
 import validators  # noqa: E402
 
@@ -159,3 +160,32 @@ def test_concept_mapper_known_code():
 def test_concept_mapper_unknown_code_returns_zero():
     concept_id, name = map_code_to_concept("SNOMED", "does-not-exist")
     assert concept_id == 0
+
+
+def test_no_concept_id_maps_to_two_different_names():
+    """A repeated concept_id under two names means at least one row is wrong.
+
+    This caught a real error: acute bronchitis and pneumonia both carried
+    concept_id 255848. Distinct conditions cannot share a standard concept,
+    so the collision was proof of a bad entry without needing Athena access.
+    """
+    names_by_id: dict[int, set[str]] = {}
+    for (_vocab, _code), (concept_id, name) in COMMON_CONCEPT_MAP.items():
+        names_by_id.setdefault(concept_id, set()).add(name)
+
+    collisions = {cid: names for cid, names in names_by_id.items() if len(names) > 1}
+    assert not collisions, f"concept_id reused under conflicting names: {collisions}"
+
+
+def test_removed_bronchitis_code_falls_through_to_unmapped():
+    """The dropped entry must degrade to concept_id 0, not a guessed value."""
+    concept_id, _name = map_code_to_concept("SNOMED", "10509002")
+    assert concept_id == 0
+
+
+def test_unverified_vocabulary_is_declared_not_hidden():
+    """The map ships unverified; that must be discoverable programmatically."""
+    assert concept_mapper.VERIFIED_AGAINST_ATHENA is False, (
+        "If the concept map has now been verified against Athena, update this "
+        "test along with the flag — don't flip the flag without checking rows."
+    )
