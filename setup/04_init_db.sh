@@ -42,6 +42,17 @@ run_if_exists () {
 run_if_exists "$DDL_DIR"/OMOPCDM_postgresql_5.4_ddl.sql
 run_if_exists "$DDL_DIR"/OMOPCDM_postgresql_5.4_primary_keys.sql
 run_if_exists "$DDL_DIR"/OMOPCDM_postgresql_5.4_indices.sql
-run_if_exists "$DDL_DIR"/OMOPCDM_postgresql_5.4_constraints.sql
+
+# Deliberately NOT running OMOPCDM_postgresql_5.4_constraints.sql: nearly
+# every FK in that file targets CONCEPT (CONCEPT_ID), and CONCEPT/DOMAIN/
+# VOCABULARY/CONCEPT_CLASS are only populated by loading the full OHDSI
+# Athena vocabulary — explicitly out of scope for this reference build (see
+# README's "Known limitations" and etl/concept_mapper.py). With those
+# constraints active, every insert of a real concept_id (even a correctly
+# mapped one) fails because the vocabulary tables are empty. Referential
+# integrity against CONCEPT is instead enforced at the application layer by
+# governance/validators.py::check_concept_coverage, which is the checked,
+# reported version of the same guarantee (see docs/ARCHITECTURE.md step 5).
+# If you load the real Athena vocabulary, re-run constraints.sql by hand.
 
 echo "Done. Verify with: $PSQL -c '\dt $CDM_SCHEMA.*'"
