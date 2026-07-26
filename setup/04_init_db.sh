@@ -24,11 +24,16 @@ $PSQL -c "CREATE SCHEMA IF NOT EXISTS $CDM_SCHEMA;"
 # exact filenames differ in the version you pulled, `ls "$DDL_DIR"` and
 # adjust — the pattern is always: ddl (tables) -> primary_keys -> indices ->
 # constraints, run in that order.
+#
+# The OHDSI DDL files use SqlRender template syntax (`@cdmDatabaseSchema`),
+# not psql's `:variable` syntax — `psql -v` silently does not substitute
+# `@`-prefixed tokens, so we do a literal text substitution before piping
+# into psql.
 run_if_exists () {
   local f="$1"
   if [ -f "$f" ]; then
     echo "Running $(basename "$f")..."
-    $PSQL -v cdmDatabaseSchema="$CDM_SCHEMA" -f "$f"
+    sed "s/@cdmDatabaseSchema/$CDM_SCHEMA/g" "$f" | $PSQL -v ON_ERROR_STOP=1
   else
     echo "SKIP (not found): $f"
   fi
