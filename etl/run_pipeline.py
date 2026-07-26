@@ -14,6 +14,11 @@ Usage:
   python etl/run_pipeline.py --input data/synthea_output/fhir --report-out reports/ --no-load
       (--no-load: run mapping + validation + report, skip the DB write —
        useful for iterating on mapping logic without a DB running)
+  python etl/run_pipeline.py --input data/synthea_output/fhir --report-out reports/ --truncate
+      (--truncate: empty the target OMOP tables first. The load is
+       append-only, so re-running without this against the same input
+       duplicates every row. Surrogate keys are stable, so truncate+reload
+       is an idempotent refresh.)
 """
 from __future__ import annotations
 
@@ -40,6 +45,28 @@ from quality_report import generate_report  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("run_pipeline")
+
+
+def _git_revision() -> str:
+    """Short commit SHA of the code that produced a run, for the report.
+
+    An audit artifact that can't say which version of the ETL generated it
+    isn't much of an audit artifact. Degrades gracefully outside a checkout.
+    """
+    import subprocess
+
+    try:
+        sha = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent.parent), "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent.parent), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=5, check=True,
+        ).stdout.strip()
+        return f"{sha}-dirty" if dirty else sha
+    except Exception:  # not a git checkout, git absent, etc.
+        return "unknown"
 
 
 def exclude_orphans(df: pd.DataFrame, table_name: str) -> tuple[pd.DataFrame, int]:
@@ -69,7 +96,9 @@ def exclude_orphans(df: pd.DataFrame, table_name: str) -> tuple[pd.DataFrame, in
     return kept, n_orphaned
 
 
-def load_to_postgres(tables: dict[str, pd.DataFrame], schema: str) -> None:
+def load_to_postgres(
+    tables: dict[str, pd.DataFrame], schema: str, truncate_first: bool = False
+) -> None:
     import psycopg2
     from psycopg2.extras import execute_values
 
@@ -82,6 +111,16 @@ def load_to_postgres(tables: dict[str, pd.DataFrame], schema: str) -> None:
     )
     try:
         with conn.cursor() as cur:
+            if truncate_first:
+                # Load is append-only and the CDM has no unique constraint on
+                # the source-value columns, so re-running against the same
+                # input would duplicate every row. Surrogate keys are stable
+                # (fhir_utils.stable_id), so a truncate + reload is
+                # effectively an idempotent refresh.
+                targets = ", ".join(f"{schema}.{t}" for t in tables)
+                logger.warning("--truncate set: emptying %s before load", targets)
+                cur.execute(f"TRUNCATE {targets}")
+
             for table_name, df in tables.items():
                 if df.empty:
                     logger.info("Skipping load for %s — no rows", table_name)
@@ -110,6 +149,13 @@ def main():
     parser.add_argument("--report-out", default="reports", help="Directory for the quality report")
     parser.add_argument("--schema", default=os.environ.get("CDM_SCHEMA", "cdm"))
     parser.add_argument("--no-load", action="store_true", help="Skip loading into Postgres")
+    parser.add_argument(
+        "--truncate",
+        action="store_true",
+        help="TRUNCATE the target OMOP tables before loading. The load is "
+             "append-only, so without this a re-run against the same input "
+             "duplicates every row.",
+    )
     args = parser.parse_args()
 
     run_id = uuid.uuid4().hex[:8]
@@ -118,6 +164,7 @@ def main():
     # 1. Load raw FHIR
     buckets = load_bundles(args.input)
     dfs = bundles_to_dataframes(buckets)
+    n_patient_bundles = len(buckets.get("Patient", []))
 
     # 2. Map, in dependency order
     person_df = map_person(dfs["Patient"])
@@ -192,12 +239,33 @@ def main():
     if args.no_load:
         logger.info("--no-load set: skipping Postgres load")
     else:
-        load_to_postgres(load_tables, args.schema)
+        load_to_postgres(load_tables, args.schema, truncate_first=args.truncate)
 
     # 5. Report
     row_counts = {t: len(df) for t, df in tables.items()}
+    provenance = {
+        "input_directory": str(Path(args.input).resolve()),
+        "patient_bundles_read": n_patient_bundles,
+        "target_schema": args.schema,
+        "target_database": (
+            "(not loaded)" if args.no_load
+            else f"{os.environ.get('PGHOST', 'localhost')}:"
+                 f"{os.environ.get('PGPORT', '5433')}/"
+                 f"{os.environ.get('PGDATABASE', 'omop_cdm')}"
+        ),
+        "loaded_to_database": "no (--no-load)" if args.no_load else "yes",
+        "truncated_before_load": (
+            "n/a" if args.no_load else ("yes (--truncate)" if args.truncate else "no (appended)")
+        ),
+        "code_version": _git_revision(),
+    }
     report_path = generate_report(
-        run_id, row_counts, results, args.report_out, orphan_counts=orphan_counts
+        run_id,
+        row_counts,
+        results,
+        args.report_out,
+        orphan_counts=orphan_counts,
+        provenance=provenance,
     )
     logger.info("Quality report written to %s", report_path)
 

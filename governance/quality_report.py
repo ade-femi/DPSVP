@@ -23,6 +23,7 @@ def generate_report(
     validation_results: list[ValidationResult],
     output_dir: str | Path,
     orphan_counts: dict[str, int] | None = None,
+    provenance: dict[str, object] | None = None,
 ) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,18 @@ def generate_report(
     lines.append(f"- Passed: **{n_passed}**")
     lines.append(f"- Failed/flagged: **{n_failed}**")
     lines.append("")
+
+    if provenance:
+        lines.append("## Provenance")
+        lines.append("")
+        lines.append(
+            tabulate(
+                [[k.replace("_", " "), v] for k, v in provenance.items()],
+                headers=["", ""],
+                tablefmt="github",
+            )
+        )
+        lines.append("")
 
     lines.append("## Row counts by OMOP table")
     lines.append("")
