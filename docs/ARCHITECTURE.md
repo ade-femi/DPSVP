@@ -33,9 +33,21 @@
 5. **`governance/validators.py`** runs four check families against every
    mapped table before load: not-null on required fields, referential
    integrity against `person_id`, date-range sanity, and concept-mapping
-   coverage. Nothing is silently dropped for failing a check — orphaned rows
-   (no matching person) are excluded from load with a logged reason, but
-   every other row loads with its validation status recorded in the report.
+   coverage.
+
+   **Validation order is deliberate.** The domain mappers do *not* discard
+   rows whose subject reference can't be resolved to a person; they keep them
+   with `person_id = None`. That is what lets `check_referential_integrity`
+   actually observe and count them. If the mappers dropped orphans on sight
+   — the obvious implementation — the frame reaching the FK check would be
+   clean by construction and the check could never fail, reporting a
+   reassuring `0 orphans` no matter how broken the input was.
+
+   Orphans are excluded only *after* validation, in a single place
+   (`exclude_orphans` in `etl/run_pipeline.py`), which logs a warning per
+   affected table and returns a count. Those counts appear in the quality
+   report under "Rows excluded from load". Every other row loads with its
+   validation status recorded.
 
 6. **`etl/run_pipeline.py`** is the orchestrator: loads → maps in dependency
    order → validates → loads into Postgres → writes the quality report.

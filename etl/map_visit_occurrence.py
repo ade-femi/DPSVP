@@ -39,12 +39,14 @@ def map_visit_occurrence(
 
     rows = []
     for _, e in encounters_df.iterrows():
+        # Orphaned encounters (no matching person) are retained with
+        # person_id = None so check_referential_integrity can count them;
+        # run_pipeline.py excludes them from load after validation and builds
+        # visit_lookup only from non-orphaned visits.
         patient_src = _patient_ref_to_source_value(
             as_dict(e.get("subject")).get("reference")
         )
         person_id = person_lookup.get(patient_src)
-        if person_id is None:
-            continue  # orphaned encounter, no matching person — flagged by governance validators
 
         period = as_dict(e.get("period"))
         class_code = as_dict(e.get("class")).get("code", "")

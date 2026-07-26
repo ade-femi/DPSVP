@@ -43,6 +43,33 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 logger = logging.getLogger("run_pipeline")
 
 
+def exclude_orphans(df: pd.DataFrame, table_name: str) -> tuple[pd.DataFrame, int]:
+    """Removes rows whose person_id could not be resolved, and says so.
+
+    The domain mappers deliberately keep these rows (with person_id = None) so
+    that check_referential_integrity can observe and count them — see the
+    comment in etl/map_condition_occurrence.py. This function is the single
+    place where they are actually excluded from the load, and every exclusion
+    is logged and reported. Returns (kept_rows, n_excluded).
+    """
+    if df.empty or "person_id" not in df.columns:
+        return df, 0
+
+    orphan_mask = df["person_id"].isna()
+    n_orphaned = int(orphan_mask.sum())
+    if n_orphaned:
+        logger.warning(
+            "Excluding %d orphaned row(s) from %s load — subject references a "
+            "person_id not present in the person table",
+            n_orphaned,
+            table_name,
+        )
+    kept = df.loc[~orphan_mask].copy()
+    if not kept.empty:
+        kept["person_id"] = kept["person_id"].astype("int64")
+    return kept, n_orphaned
+
+
 def load_to_postgres(tables: dict[str, pd.DataFrame], schema: str) -> None:
     import psycopg2
     from psycopg2.extras import execute_values
@@ -92,7 +119,16 @@ def main():
     logger.info("Mapped %d persons", len(person_df))
 
     visit_df = map_visit_occurrence(dfs["Encounter"], person_lookup)
-    visit_lookup = dict(zip(visit_df["visit_source_value"], visit_df["visit_occurrence_id"])) if not visit_df.empty else {}
+    # Build the visit lookup from non-orphaned visits only: an orphaned visit
+    # is excluded from the load, so letting a child row point at it would
+    # leave a dangling visit_occurrence_id in the loaded CDM.
+    if visit_df.empty:
+        visit_lookup = {}
+    else:
+        loadable_visits = visit_df[visit_df["person_id"].notna()]
+        visit_lookup = dict(
+            zip(loadable_visits["visit_source_value"], loadable_visits["visit_occurrence_id"])
+        )
     logger.info("Mapped %d visit_occurrences", len(visit_df))
 
     condition_df = map_condition_occurrence(dfs["Condition"], person_lookup, visit_lookup)
@@ -129,24 +165,34 @@ def main():
         results.append(validators.check_date_sanity(df, date_col, tname))
         results.append(validators.check_concept_coverage(df, concept_col, tname))
 
-    # 4. Load
+    # 4. Exclude orphaned rows, then load.
+    #
+    # Order matters and is the point: validation above ran against the FULL
+    # mapped tables, including orphans, so the FK check reports real numbers.
+    # Only now are orphans removed, and every removal is logged and counted.
+    orphan_counts: dict[str, int] = {}
+    # drop internal helper columns not present in the real OMOP DDL before load
+    load_tables = {
+        "person": person_df,
+        "visit_occurrence": visit_df.drop(columns=["visit_source_value", "visit_class_source_value"], errors="ignore"),
+        "condition_occurrence": condition_df.drop(columns=["condition_source_concept_name", "condition_status_source_value"], errors="ignore"),
+        "drug_exposure": drug_df.drop(columns=["drug_source_concept_name", "status_source_value"], errors="ignore"),
+        "measurement": measurement_df.drop(columns=["measurement_source_concept_name"], errors="ignore"),
+        "observation": observation_df.drop(columns=["observation_source_concept_name"], errors="ignore"),
+    }
+    for tname in list(load_tables):
+        load_tables[tname], orphan_counts[tname] = exclude_orphans(load_tables[tname], tname)
+
     if args.no_load:
         logger.info("--no-load set: skipping Postgres load")
     else:
-        # drop internal helper columns not present in the real OMOP DDL before load
-        load_tables = {
-            "person": person_df,
-            "visit_occurrence": visit_df.drop(columns=["visit_source_value", "visit_class_source_value"], errors="ignore"),
-            "condition_occurrence": condition_df.drop(columns=["condition_source_concept_name", "condition_status_source_value"], errors="ignore"),
-            "drug_exposure": drug_df.drop(columns=["drug_source_concept_name", "status_source_value"], errors="ignore"),
-            "measurement": measurement_df.drop(columns=["measurement_source_concept_name"], errors="ignore"),
-            "observation": observation_df.drop(columns=["observation_source_concept_name"], errors="ignore"),
-        }
         load_to_postgres(load_tables, args.schema)
 
     # 5. Report
     row_counts = {t: len(df) for t, df in tables.items()}
-    report_path = generate_report(run_id, row_counts, results, args.report_out)
+    report_path = generate_report(
+        run_id, row_counts, results, args.report_out, orphan_counts=orphan_counts
+    )
     logger.info("Quality report written to %s", report_path)
 
 

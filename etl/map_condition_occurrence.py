@@ -39,10 +39,14 @@ def map_condition_occurrence(
 
     rows = []
     for _, c in conditions_df.iterrows():
+        # Orphans (subject references a patient not in the person set) are
+        # deliberately RETAINED here with person_id = None, so that
+        # governance/validators.py::check_referential_integrity can actually
+        # observe and count them. run_pipeline.py excludes them from the load
+        # after validation, logging the count. Dropping them here instead
+        # would make the FK check structurally incapable of failing.
         person_src = _ref_id(as_dict(c.get("subject")).get("reference"))
         person_id = person_lookup.get(person_src)
-        if person_id is None:
-            continue
 
         encounter_src = _ref_id(as_dict(c.get("encounter")).get("reference"))
         visit_occurrence_id = visit_lookup.get(encounter_src)

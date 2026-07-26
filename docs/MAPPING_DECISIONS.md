@@ -45,11 +45,16 @@ decisions."
 
 ## Cross-cutting decisions
 
-- **Orphaned records are excluded from load, not force-linked.** If a
-  Condition references a Patient not present in the loaded person set (can
-  happen with partial/filtered input), the row is dropped and the drop is
-  implicit in the referential-integrity check's row count — never silently
-  attached to a wrong or null person_id.
+- **Orphaned records are excluded from load, not force-linked — and the
+  exclusion is counted, not implicit.** If a Condition references a Patient
+  not present in the loaded person set (can happen with partial/filtered
+  input), the row is never attached to a wrong or null person_id. It is
+  carried through mapping with `person_id = None` so the referential-integrity
+  validator can count it, then excluded from the load by `exclude_orphans` in
+  `etl/run_pipeline.py`, which logs the exclusion and reports the per-table
+  count in the quality report's "Rows excluded from load" section. The
+  mappers deliberately do not drop these rows themselves; doing so would
+  leave the FK check unable to ever fail. See docs/ARCHITECTURE.md step 5.
 - **`concept_id = 0` is used, never left null**, for anything that fails
   vocabulary mapping — this is the OMOP-standard convention for "no matching
   concept" and keeps every row present-and-flagged rather than missing.

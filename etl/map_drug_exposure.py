@@ -38,10 +38,10 @@ def map_drug_exposure(
 
     rows = []
     for _, m in med_requests_df.iterrows():
+        # Orphans retained with person_id = None so the FK validator can see
+        # them; run_pipeline.py excludes them from load after validation.
         person_src = _ref_id(as_dict(m.get("subject")).get("reference"))
         person_id = person_lookup.get(person_src)
-        if person_id is None:
-            continue
 
         encounter_src = _ref_id(as_dict(m.get("encounter")).get("reference"))
         visit_occurrence_id = visit_lookup.get(encounter_src)

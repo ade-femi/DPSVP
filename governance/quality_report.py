@@ -21,6 +21,7 @@ def generate_report(
     table_row_counts: dict[str, int],
     validation_results: list[ValidationResult],
     output_dir: str | Path,
+    orphan_counts: dict[str, int] | None = None,
 ) -> Path:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -76,6 +77,32 @@ def generate_report(
     )
     lines.append("")
 
+    lines.append("## Rows excluded from load")
+    lines.append("")
+    orphan_counts = orphan_counts or {}
+    total_excluded = sum(orphan_counts.values())
+    if total_excluded:
+        lines.append(
+            tabulate(
+                [[t, n] for t, n in orphan_counts.items() if n],
+                headers=["table", "rows_excluded_unresolved_person_id"],
+                tablefmt="github",
+            )
+        )
+        lines.append("")
+        lines.append(
+            f"**{total_excluded} row(s)** were mapped and validated but excluded "
+            "from the database load because their subject reference could not be "
+            "resolved to a `person_id`. They are counted in the "
+            "`fk:person_id` checks above, not hidden from them."
+        )
+    else:
+        lines.append(
+            "No rows were excluded — every mapped row resolved to a "
+            "`person_id` present in the `person` table."
+        )
+    lines.append("")
+
     lines.append("## Notes")
     lines.append("")
     lines.append(
@@ -84,10 +111,15 @@ def generate_report(
         "vocabulary. See `etl/concept_mapper.py` for the production seam."
     )
     lines.append(
-        "- No rows are silently dropped for failing validation; failures are "
-        "recorded here. Deciding what to do about a given failure class "
-        "(quarantine, block load, accept) is a downstream governance policy "
-        "decision, not something this ETL layer should decide unilaterally."
+        "- Validation above runs against the **full** mapped tables, before "
+        "any row is excluded, so the `fk:person_id` counts reflect the real "
+        "input. Exclusions happen afterwards and are itemised in the section "
+        "above — nothing is dropped without appearing in this report."
+    )
+    lines.append(
+        "- Deciding what to do about a given failure class (quarantine, block "
+        "load, accept) is a downstream governance policy decision, not "
+        "something this ETL layer should decide unilaterally."
     )
 
     report_path = output_dir / f"quality_report_{run_id}.md"
