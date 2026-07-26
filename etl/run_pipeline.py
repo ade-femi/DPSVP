@@ -60,8 +60,12 @@ def _git_revision() -> str:
             ["git", "-C", str(Path(__file__).parent.parent), "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
+        # --untracked-files=no: only uncommitted edits to *tracked* files mean
+        # the code that ran differs from the recorded commit. New untracked
+        # files (the report being written, scratch data) do not.
         dirty = subprocess.run(
-            ["git", "-C", str(Path(__file__).parent.parent), "status", "--porcelain"],
+            ["git", "-C", str(Path(__file__).parent.parent), "status",
+             "--porcelain", "--untracked-files=no"],
             capture_output=True, text=True, timeout=5, check=True,
         ).stdout.strip()
         return f"{sha}-dirty" if dirty else sha
