@@ -1,6 +1,6 @@
-# Data Quality Report — run `78f03925`
+# Data Quality Report — run `807671e6`
 
-Generated: 2026-07-26T17:14:19Z
+Generated: 2026-07-26T17:26:40Z
 
 ## Summary
 
@@ -18,7 +18,7 @@ Generated: 2026-07-26T17:14:19Z
 | target database       | localhost:5432/omop_cdm                   |
 | loaded to database    | yes                                       |
 | truncated before load | yes (--truncate)                          |
-| code version          | 03bb174                                   |
+| code version          | c7b0fab                                   |
 
 ## Row counts by OMOP table
 
